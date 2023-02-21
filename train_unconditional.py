@@ -67,7 +67,7 @@ def parse_args():
     # self aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaded
     parser.add_argument(
         "--vae_model",
-        default="stabilityai/sd-vae-ft-ema",
+        # default="stabilityai/sd-vae-ft-ema",
         type=str,
         required=False,
         help="Path to pretrained VAE model, either stabilityai/sd-vae-ft-mse or stabilityai/sd-vae-ft-ema.",
@@ -82,7 +82,6 @@ def parse_args():
     parser.add_argument(
         "--use_wandb",
         default=True,
-        action="store_true",
         help="Whether to use wandb.",
     )
     parser.add_argument(
@@ -111,7 +110,7 @@ def parse_args():
     parser.add_argument(
         "--patch_size",
         type=int,
-        default=1,
+        default=-1,
     )
     parser.add_argument(
         "--sample_size",
@@ -138,7 +137,7 @@ def parse_args():
     parser.add_argument(
         "--out_channels",
         type=int,
-        default=8,
+        default=4,
     )
 
     parser.add_argument(
@@ -456,7 +455,7 @@ def main(args):
     #         raise ImportError("Make sure to install wandb if you want to use it for logging during training.")
     #     import wandb
     current_time = time.strftime("%Y-%m-%d-%H-%M-%S", time.localtime())
-    signature = f"{current_time}_{args.model_type}_{args.eval_batch_size}_{args.learning_rate}_{args.patch_size}"
+    signature = f"{current_time}_{args.model_type}_{args.eval_batch_size}_{args.learning_rate}_{args.patch_size}_{args.num_layers}"
 
     if accelerator.is_main_process and args.use_wandb:
         wandb.init(
@@ -551,7 +550,8 @@ def main(args):
             norm_type="ada_norm",
         )
         # vae
-        vae = AutoencoderKL.from_pretrained(args.vae_model)
+        if args.vae_model is not None:
+            vae = AutoencoderKL.from_pretrained(args.vae_model)
     elif args.model_type == "unet":
         if args.model_config_name_or_path is None:
             model = UNet2DModel(
@@ -702,10 +702,14 @@ def main(args):
             model, optimizer, train_dataloader, lr_scheduler
         )
     elif args.model_type == "transformer":
-        model, vae, optimizer, train_dataloader, lr_scheduler = accelerator.prepare(
-            model, vae, optimizer, train_dataloader, lr_scheduler
-        )
-
+        if args.vae_model is not None:
+            model, vae, optimizer, train_dataloader, lr_scheduler = accelerator.prepare(
+                model, vae, optimizer, train_dataloader, lr_scheduler
+            )
+        else:
+            model, optimizer, train_dataloader, lr_scheduler = accelerator.prepare(
+                model, optimizer, train_dataloader, lr_scheduler
+            )
     if args.use_ema:
         ema_model.to(accelerator.device)
 
@@ -775,38 +779,42 @@ def main(args):
 
             # todo do vae.encode
             if args.model_type == "transformer":
-                # corresponding to the vae.decode processes
-                # THIS IS DIFFERENT FROM WHAT LUKE DID, BECAUSE THE SHAPES DIFFER
-                vae_unwrapped = accelerator.unwrap_model(vae)
-                clean_images = 2.0 * clean_images - 1.0
-                # print(f'start with shape {clean_images.shape}')
-                latent_images = vae_unwrapped.encode(
-                    clean_images
-                ).latent_dist.sample()  # ???  # (B * V, C_lat, H_lat, W_lat)
-                # print('mid shape', latent_images.shape)
-                # exit(0)
-                # latent_images = (latent_images
-                #  .unflatten(0, latent_images.shape[:2]) # (B, V, C_lat, H_lat, W_lat)
-                #  .flatten(1, 2))  # (B, C_lat', H_lat, W_lat) := (B, V * C_lat, H_lat, W_lat)
-                # print(f'succeed half, with shapes: {latent_images.shape}, {clean_images.shape}')
-                latent_images = 0.18215 * latent_images
-                # print(f'succeed vae.encode, with shapes: {latent_images.shape}, {clean_images.shape}')
-            # print(f'!!!after encode {latent_images.shape}')
+                if args.vae_model:
+                    # corresponding to the vae.decode processes
+                    # THIS IS DIFFERENT FROM WHAT LUKE DID, BECAUSE THE SHAPES DIFFER
+                    vae_unwrapped = accelerator.unwrap_model(vae)
+                    clean_images = 2.0 * clean_images - 1.0
+                    # print(f'start with shape {clean_images.shape}')
+                    latent_images = vae_unwrapped.encode(
+                        clean_images
+                    ).latent_dist.sample()  # ???  # (B * V, C_lat, H_lat, W_lat)
+                    # print('mid shape', latent_images.shape)
+                    # exit(0)
+                    # latent_images = (latent_images
+                    #  .unflatten(0, latent_images.shape[:2]) # (B, V, C_lat, H_lat, W_lat)
+                    #  .flatten(1, 2))  # (B, C_lat', H_lat, W_lat) := (B, V * C_lat, H_lat, W_lat)
+                    # print(f'succeed half, with shapes: {latent_images.shape}, {clean_images.shape}')
+                    latent_images = 0.18215 * latent_images
+                    # print(f'succeed vae.encode, with shapes: {latent_images.shape}, {clean_images.shape}')
+                # print(f'!!!after encode {latent_images.shape}')
+                    clean_images = latent_images
+                # else:
+                    # print('skipped encoding in training')
 
             # Sample noise that we'll add to the images
-            noise = torch.randn(latent_images.shape).to(latent_images.device)
-            bsz = latent_images.shape[0]
+            noise = torch.randn(clean_images.shape).to(clean_images.device)
+            bsz = clean_images.shape[0]
             # Sample a random timestep for each image
             timesteps = torch.randint(
                 0,
                 noise_scheduler.config.num_train_timesteps,
                 (bsz,),
-                device=latent_images.device,
+                device=clean_images.device,
             ).long()
 
             # Add noise to the clean images according to the noise magnitude at each timestep
             # (this is the forward diffusion process)
-            noisy_images = noise_scheduler.add_noise(latent_images, noise, timesteps)
+            noisy_images = noise_scheduler.add_noise(clean_images, noise, timesteps)
 
             with accelerator.accumulate(model):
                 # print(f'!!!in accumulate {noisy_images.shape}, {timesteps.shape}')
@@ -821,11 +829,11 @@ def main(args):
                     alpha_t = _extract_into_tensor(
                         noise_scheduler.alphas_cumprod,
                         timesteps,
-                        (latent_images.shape[0], 1, 1, 1),
+                        (clean_images.shape[0], 1, 1, 1),
                     )
                     snr_weights = alpha_t / (1 - alpha_t)
                     loss = snr_weights * F.mse_loss(
-                        model_output, latent_images, reduction="none"
+                        model_output, clean_images, reduction="none"
                     )  # use SNR weighting from distillation paper
                     loss = loss.mean()
                 else:
@@ -839,7 +847,7 @@ def main(args):
                 optimizer.step()
                 lr_scheduler.step()
                 optimizer.zero_grad()
-            # print(f'!!!after accumulate')
+            print(f'!!!after accumulate')
             # Checks if the accelerator has performed an optimization step behind the scenes
             if accelerator.sync_gradients:
                 if args.use_ema:
@@ -881,25 +889,47 @@ def main(args):
                         unet=model_unwrapped,
                         scheduler=noise_scheduler,
                     )
+                    generator = torch.Generator(device=pipeline.device).manual_seed(0)
+                    images = pipeline(
+                        batch_size = args.eval_batch_size,
+                        generator=generator,
+                        # batch_size=args.eval_batch_size,
+                        num_inference_steps=args.ddpm_num_inference_steps,
+                        output_type="numpy",
+                    ).images
                 elif args.model_type == "transformer":
-                    vae_unwrapped = accelerator.unwrap_model(vae)
-                    pipeline = DiTPipeline(
-                        transformer=model_unwrapped,
-                        vae=vae_unwrapped,
-                        scheduler=noise_scheduler,
-                    )
-
-                generator = torch.Generator(device=pipeline.device).manual_seed(0)
-                # run pipeline in inference (sample random noise and denoise)
-                # FIXME possible errors
-                images = pipeline(
-                    class_labels=[0] * args.eval_batch_size,
-                    generator=generator,
-                    # batch_size=args.eval_batch_size,
-                    num_inference_steps=args.ddpm_num_inference_steps,
-                    output_type="numpy",
-                    guidance_scale=0,
-                ).images
+                    if args.use_vae:
+                        vae_unwrapped = accelerator.unwrap_model(vae)
+                        pipeline = DiTPipeline(
+                            transformer=model_unwrapped,
+                            vae=vae_unwrapped,
+                            scheduler=noise_scheduler,
+                        )
+                        generator = torch.Generator(device=pipeline.device).manual_seed(0)
+                        images = pipeline(
+                            class_labels=[0] * args.eval_batch_size,
+                            generator=generator,
+                            # batch_size=args.eval_batch_size,
+                            num_inference_steps=args.ddpm_num_inference_steps,
+                            output_type="numpy",
+                            guidance_scale=0,
+                        ).images
+                    else:
+                        pipeline = DDPMPipeline(
+                            unet=model_unwrapped,
+                            scheduler=noise_scheduler,
+                        )
+                        generator = torch.Generator(device=pipeline.device).manual_seed(0)
+                        images = pipeline(
+                            batch_size = args.eval_batch_size,
+                            generator=generator,
+                            # batch_size=args.eval_batch_size,
+                            num_inference_steps=args.ddpm_num_inference_steps,
+                            output_type="numpy",
+                            guidance_scale=0,
+                        ).images
+                
+                
 
                 # denormalize the images and save to tensorboard
                 images_processed = (images * 255).round().astype("uint8")
