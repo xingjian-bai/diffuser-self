@@ -81,7 +81,7 @@ def parse_args():
     )
     parser.add_argument(
         "--use_wandb",
-        default=False,
+        default=True,
         action="store_true",
         help="Whether to use wandb.",
     )
@@ -539,18 +539,14 @@ def main(args):
         """
         model = Transformer2DModel(
             attention_bias=True,
-            attention_head_dim=72,
+            attention_head_dim=args.attention_head_dim,
             in_channels = args.in_channels,
             out_channels = args.out_channels,
             norm_elementwise_affine = False,
-
             sample_size=args.sample_size,
-            # attention_head_dim=72,  # hidden_size = 384?
-            # in_channels=4,
-            # out_channels=4,
             num_layers=args.num_layers,  # depth
             num_attention_heads=args.num_attention_heads,
-            patch_size=None, # !!!
+            patch_size= None if args.patch_size == -1 else args.patch_size,
             num_embeds_ada_norm=1000,
             norm_type="ada_norm",
         )
@@ -768,6 +764,7 @@ def main(args):
         )
         progress_bar.set_description(f"Epoch {epoch}")
         for step, batch in enumerate(train_dataloader):
+            # print(f'!!!in step {step}')
             # Skip steps until we reach the resumed step
             if args.resume_from_checkpoint and epoch == first_epoch and step < resume_step:
                 if step % args.gradient_accumulation_steps == 0:
@@ -794,6 +791,7 @@ def main(args):
                 # print(f'succeed half, with shapes: {latent_images.shape}, {clean_images.shape}')
                 latent_images = 0.18215 * latent_images
                 # print(f'succeed vae.encode, with shapes: {latent_images.shape}, {clean_images.shape}')
+            # print(f'!!!after encode {latent_images.shape}')
 
             # Sample noise that we'll add to the images
             noise = torch.randn(latent_images.shape).to(latent_images.device)
@@ -811,6 +809,7 @@ def main(args):
             noisy_images = noise_scheduler.add_noise(latent_images, noise, timesteps)
 
             with accelerator.accumulate(model):
+                # print(f'!!!in accumulate {noisy_images.shape}, {timesteps.shape}')
                 # Predict the noise residual
                 # print(f"before the error: {noisy_images.shape}, {timesteps}")
                 model_output = model(noisy_images, timestep=timesteps).sample
@@ -832,6 +831,7 @@ def main(args):
                 else:
                     raise ValueError(f"Unsupported prediction type: {args.prediction_type}")
 
+                # print(f'!!before backward {loss.shape}')
                 accelerator.backward(loss)
 
                 if accelerator.sync_gradients:
@@ -839,7 +839,7 @@ def main(args):
                 optimizer.step()
                 lr_scheduler.step()
                 optimizer.zero_grad()
-
+            # print(f'!!!after accumulate')
             # Checks if the accelerator has performed an optimization step behind the scenes
             if accelerator.sync_gradients:
                 if args.use_ema:
@@ -858,12 +858,10 @@ def main(args):
                 "lr": lr_scheduler.get_last_lr()[0],
                 "step": global_step,
             }
-
             if args.use_ema:
                 logs["ema_decay"] = ema_model.cur_decay_value
             progress_bar.set_postfix(**logs)
             accelerator.log(logs, step=global_step)
-
             if accelerator.is_main_process and args.use_wandb:
                 wandb.log(logs, step=global_step)
         progress_bar.close()
