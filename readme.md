@@ -1,0 +1,1 @@
+You can copy my flowers102 folder to the root directory of this repo
