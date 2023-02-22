@@ -455,6 +455,7 @@ class AdaLayerNorm(nn.Module):
         self.norm = nn.LayerNorm(embedding_dim, elementwise_affine=False)
 
     def forward(self, x, timestep):
+        # print(f'pre error: {timestep}, {self.emb.device}, {x.device}')
         emb = self.linear(self.silu(self.emb(timestep)))
         scale, shift = torch.chunk(emb, 2, dim=-1)
         scale = torch.unsqueeze(scale, dim=1)

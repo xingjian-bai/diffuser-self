@@ -45,8 +45,8 @@ class DiTPipeline(DiffusionPipeline):
     def __init__(
         self,
         transformer: Transformer2DModel,
-        vae: AutoencoderKL,
         scheduler: KarrasDiffusionSchedulers,
+        vae: Optional[AutoencoderKL] = None,
         id2label: Optional[Dict[int, str]] = None,
     ):
         super().__init__()
@@ -183,12 +183,13 @@ class DiTPipeline(DiffusionPipeline):
         else:
             latents = latent_model_input
 
-        latents = 1 / 0.18215 * latents # 1 / self.vae.config.scaling_factor * latents
-        samples = self.vae.decode(latents).sample
+        if self.vae is not None:
+            latents = 1 / 0.18215 * latents # 1 / self.vae.config.scaling_factor * latents
+            samples = self.vae.decode(latents).sample
+        else:
+            samples = latents
 
         samples = (samples / 2 + 0.5).clamp(0, 1)
-
-        # we always cast to float32 as this does not cause significant overhead and is compatible with bfloat16
         samples = samples.cpu().permute(0, 2, 3, 1).float().numpy()
 
         if output_type == "pil":

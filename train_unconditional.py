@@ -65,100 +65,28 @@ def parse_args():
     parser = argparse.ArgumentParser(description="Simple example of a training script.")
 
     # self aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaded
-    parser.add_argument(
-        "--vae_model",
-        # default="stabilityai/sd-vae-ft-ema",
-        type=str,
-        required=False,
-        help="Path to pretrained VAE model, either stabilityai/sd-vae-ft-mse or stabilityai/sd-vae-ft-ema.",
-    )
-
-    parser.add_argument(
-        "--model_type",
-        type=str,
-        default="unet",
-        help="The type of model to train, either `unet` or `transformer`.",
-    )
-    parser.add_argument(
-        "--use_wandb",
-        default=True,
-        help="Whether to use wandb.",
-    )
-    parser.add_argument(
-        "--dataset_dir",
-        type=str,
-        default="./../../../flowers102/",
-    )
-    parser.add_argument(
-        "--eval_batch_size",
-        type=int,
-        default=128,
-        help="The number of images to generate for evaluation.",
-    )
-    parser.add_argument(
-        "--train_batch_size",
-        type=int,
-        default=16,
-        help="Batch size (per device) for the training dataloader.",
-    )
-    parser.add_argument(
-        "--learning_rate",
-        type=float,
-        default=1e-4,
-        help="Initial learning rate (after the potential warmup period) to use.",
-    )
-    parser.add_argument(
-        "--patch_size",
-        type=int,
-        default=-1,
-    )
-    parser.add_argument(
-        "--sample_size",
-        type=int,
-        default=8,
-    )
-    parser.add_argument(
-        "--num_layers",
-        type=int,
-        default=12,
-    )
-    parser.add_argument(
-        "--num_attention_heads",
-        type=int,
-        default=16,
-    )
-
-    parser.add_argument(
-        "--in_channels",
-        type=int,
-        default=4,
-    )
-
-    parser.add_argument(
-        "--out_channels",
-        type=int,
-        default=4,
-    )
-
-    parser.add_argument(
-        "--attention_head_dim",
-        type=int,
-        default=72,
-    )
-
-    
-
+    parser.add_argument("--vae_model",type=str,required=False,)
+    parser.add_argument("--model_type",type=str,default="unet",help="either `unet` or `transformer`.",)
+    parser.add_argument("--use_wandb",default=False,action="store_true",help="Whether wandb.",)
+    parser.add_argument("--dataset_dir",type=str,default="./../../../flowers102/",)
+    parser.add_argument("--eval_batch_size",type=int,default=128,help="#images for evaluation.",)
+    parser.add_argument("--train_batch_size",type=int,default=16,help="Batch size for the training.",)
+    parser.add_argument("--learning_rate",type=float,default=1e-4,help="Initial learning rate (after warmup)",)
+    parser.add_argument("--patch_size",type=int,default=-1,)
+    parser.add_argument("--sample_size",type=int,default=8,)
+    parser.add_argument("--num_layers",type=int,default=12,)
+    parser.add_argument("--num_attention_heads",type=int,default=16,)
+    parser.add_argument("--in_channels",type=int,default=4,)
+    parser.add_argument("--out_channels",type=int,default=4,)
+    parser.add_argument("--attention_head_dim",type=int,default=72,)
     # self aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaded
 
-    parser.add_argument(
-        "--dataset_name",
-        type=str,
-        default=None,
+    parser.add_argument("--dataset_name",type=str,default=None,
         help=(
             "The name of the Dataset (from the HuggingFace hub) to train on (could be your own, possibly private,"
             " dataset). It can also be a path pointing to a local copy of a dataset in your filesystem,"
             " or to a folder containing files that HF Datasets can understand."
-        ),
+        )
     )
     parser.add_argument(
         "--dataset_config_name",
@@ -454,16 +382,11 @@ def main(args):
     #     if not is_wandb_available():
     #         raise ImportError("Make sure to install wandb if you want to use it for logging during training.")
     #     import wandb
-    current_time = time.strftime("%Y-%m-%d-%H-%M-%S", time.localtime())
-    signature = f"{current_time}_{args.model_type}_{args.eval_batch_size}_{args.learning_rate}_{args.patch_size}_{args.num_layers}"
+    
+    signature = f"{time.strftime('%Y-%m-%d-%H-%M-%S', time.localtime())}_{args.model_type}_{args.eval_batch_size}_{args.learning_rate}_{args.patch_size}_{args.num_layers}"
 
     if accelerator.is_main_process and args.use_wandb:
-        wandb.init(
-            project="diffuser-0",
-            entity="xingjian-bai",
-            config=args,
-            name=signature,
-        )
+        wandb.init(project="diffuser-0",entity="xingjian-bai",config=args,name=signature,)
 
     # `accelerate` 0.16.0 will have better support for customized saving
     if version.parse(accelerate.__version__) >= version.parse("0.16.0"):
@@ -533,9 +456,7 @@ def main(args):
 
     # Initialize the model
     if args.model_type == "transformer":
-        """
-        Config from https://github.com/facebookresearch/DiT/blob/main/models.py DiT_S_8
-        """
+        """Config from https://github.com/facebookresearch/DiT/blob/main/models.py DiT_S_8"""
         model = Transformer2DModel(
             attention_bias=True,
             attention_head_dim=args.attention_head_dim,
@@ -548,8 +469,9 @@ def main(args):
             patch_size= None if args.patch_size == -1 else args.patch_size,
             num_embeds_ada_norm=1000,
             norm_type="ada_norm",
+            norm_num_groups=args.in_channels,
         )
-        # vae
+        # vae divides the length & width by 8. Not sure if it's good for small experiments
         if args.vae_model is not None:
             vae = AutoencoderKL.from_pretrained(args.vae_model)
     elif args.model_type == "unet":
@@ -586,25 +508,20 @@ def main(args):
     # Create EMA for the model.
     if args.use_ema:
         if args.model_type == "transformer":
-            ema_model = EMAModel(
-                model.parameters(),
-                decay=args.ema_max_decay,
-                use_ema_warmup=True,
-                inv_gamma=args.ema_inv_gamma,
-                power=args.ema_power,
-                model_cls=Transformer2DModel,
-                model_config=model.config,
-            )
+            model_cls = Transformer2DModel
         elif args.model_type == "unet":
-            ema_model = EMAModel(
-                model.parameters(),
-                decay=args.ema_max_decay,
-                use_ema_warmup=True,
-                inv_gamma=args.ema_inv_gamma,
-                power=args.ema_power,
-                model_cls=UNet2DModel,
-                model_config=model.config,
-            )
+            model_cls = UNet2DModel
+        
+        ema_model = EMAModel(
+            model.parameters(),
+            decay=args.ema_max_decay,
+            use_ema_warmup=True,
+            inv_gamma=args.ema_inv_gamma,
+            power=args.ema_power,
+            model_cls=model_cls,
+            model_config=model.config,
+        )
+
     # Initialize the scheduler
     accepts_prediction_type = "prediction_type" in set(inspect.signature(DDPMScheduler.__init__).parameters.keys())
     if accepts_prediction_type:
@@ -768,7 +685,6 @@ def main(args):
         )
         progress_bar.set_description(f"Epoch {epoch}")
         for step, batch in enumerate(train_dataloader):
-            # print(f'!!!in step {step}')
             # Skip steps until we reach the resumed step
             if args.resume_from_checkpoint and epoch == first_epoch and step < resume_step:
                 if step % args.gradient_accumulation_steps == 0:
@@ -777,29 +693,16 @@ def main(args):
 
             clean_images = batch["input"]
 
-            # todo do vae.encode
+            clean_images = 2.0 * clean_images - 1.0 
+            # !!! this corresponds with the last step
+
             if args.model_type == "transformer":
                 if args.vae_model:
-                    # corresponding to the vae.decode processes
-                    # THIS IS DIFFERENT FROM WHAT LUKE DID, BECAUSE THE SHAPES DIFFER
                     vae_unwrapped = accelerator.unwrap_model(vae)
-                    clean_images = 2.0 * clean_images - 1.0
-                    # print(f'start with shape {clean_images.shape}')
                     latent_images = vae_unwrapped.encode(
                         clean_images
                     ).latent_dist.sample()  # ???  # (B * V, C_lat, H_lat, W_lat)
-                    # print('mid shape', latent_images.shape)
-                    # exit(0)
-                    # latent_images = (latent_images
-                    #  .unflatten(0, latent_images.shape[:2]) # (B, V, C_lat, H_lat, W_lat)
-                    #  .flatten(1, 2))  # (B, C_lat', H_lat, W_lat) := (B, V * C_lat, H_lat, W_lat)
-                    # print(f'succeed half, with shapes: {latent_images.shape}, {clean_images.shape}')
-                    latent_images = 0.18215 * latent_images
-                    # print(f'succeed vae.encode, with shapes: {latent_images.shape}, {clean_images.shape}')
-                # print(f'!!!after encode {latent_images.shape}')
-                    clean_images = latent_images
-                # else:
-                    # print('skipped encoding in training')
+                    clean_images = 0.18215 * latent_images
 
             # Sample noise that we'll add to the images
             noise = torch.randn(clean_images.shape).to(clean_images.device)
@@ -817,7 +720,6 @@ def main(args):
             noisy_images = noise_scheduler.add_noise(clean_images, noise, timesteps)
 
             with accelerator.accumulate(model):
-                # print(f'!!!in accumulate {noisy_images.shape}, {timesteps.shape}')
                 # Predict the noise residual
                 # print(f"before the error: {noisy_images.shape}, {timesteps}")
                 model_output = model(noisy_images, timestep=timesteps).sample
@@ -847,7 +749,6 @@ def main(args):
                 optimizer.step()
                 lr_scheduler.step()
                 optimizer.zero_grad()
-            print(f'!!!after accumulate')
             # Checks if the accelerator has performed an optimization step behind the scenes
             if accelerator.sync_gradients:
                 if args.use_ema:
@@ -898,46 +799,33 @@ def main(args):
                         output_type="numpy",
                     ).images
                 elif args.model_type == "transformer":
-                    if args.use_vae:
-                        vae_unwrapped = accelerator.unwrap_model(vae)
+                    if args.vae_model:
                         pipeline = DiTPipeline(
                             transformer=model_unwrapped,
-                            vae=vae_unwrapped,
+                            vae=accelerator.unwrap_model(vae),
                             scheduler=noise_scheduler,
                         )
-                        generator = torch.Generator(device=pipeline.device).manual_seed(0)
-                        images = pipeline(
-                            class_labels=[0] * args.eval_batch_size,
-                            generator=generator,
-                            # batch_size=args.eval_batch_size,
-                            num_inference_steps=args.ddpm_num_inference_steps,
-                            output_type="numpy",
-                            guidance_scale=0,
-                        ).images
+                        
                     else:
-                        pipeline = DDPMPipeline(
-                            unet=model_unwrapped,
+                        pipeline = DiTPipeline(
+                            transformer=model_unwrapped,
                             scheduler=noise_scheduler,
                         )
-                        generator = torch.Generator(device=pipeline.device).manual_seed(0)
-                        images = pipeline(
-                            batch_size = args.eval_batch_size,
-                            generator=generator,
-                            # batch_size=args.eval_batch_size,
-                            num_inference_steps=args.ddpm_num_inference_steps,
-                            output_type="numpy",
-                            guidance_scale=0,
-                        ).images
+                    generator = torch.Generator(device=pipeline.device).manual_seed(0)
+                    images = pipeline(
+                        class_labels=[0] * args.eval_batch_size,
+                        generator=generator,
+                        # batch_size=args.eval_batch_size,
+                        num_inference_steps=args.ddpm_num_inference_steps,
+                        output_type="numpy",
+                        guidance_scale=0,
+                    ).images
                 
                 
 
                 # denormalize the images and save to tensorboard
                 images_processed = (images * 255).round().astype("uint8")
 
-                # if args.logger == "tensorboard":
-                #     accelerator.get_tracker("tensorboard").add_images(
-                #         "test_samples", images_processed.transpose(0, 3, 1, 2), epoch
-                # aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaadded
                 folder_name = f"examples/{signature}_{epoch}"
 
                 def save_images(images):
